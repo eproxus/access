@@ -1,0 +1,14 @@
+{application, access, [
+    {description, "An OTP application"},
+    {vsn, semver},
+    {registered, []},
+    {applications, [
+        kernel,
+        stdlib
+    ]},
+    {env, []},
+    {modules, []},
+
+    {licenses, ["MIT"]},
+    {links, []}
+]}.
