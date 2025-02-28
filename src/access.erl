@@ -5,22 +5,24 @@
 -export([find/2]).
 -export([update/3]).
 -export([remove/2]).
+-export([merge/1]).
+-export([merge/2]).
 % Selectors
 -export([all/0]).
 
--compile([{inline, [traverse/5, selector/1, key/1, index/1]}]).
+% -compile([{inline, [retrieve/5, selector/1, map_get/1, list_get/1]}]).
 
 %--- API -----------------------------------------------------------------------
 
 get(Path, Data) ->
     % traverse(get, Path, Data, fun(V) -> V end, fun badvalue/2).
-    traverse(get, Path, Data, fun(V) -> V end, fun badvalue/2).
+    retrieve(get, Path, Data, fun(V) -> V end, fun badvalue/2).
 
 find(Path, Data) ->
-    traverse(get, Path, Data, fun(V) -> {ok, V} end, fun(_V, _P) -> error end).
+    retrieve(get, Path, Data, fun(V) -> {ok, V} end, fun(_V, _P) -> error end).
 
 update(Path, Value, Data) ->
-    {_, New} = traverse(
+    {_, New} = retrieve(
         get_and_update,
         Path,
         Data,
@@ -30,7 +32,7 @@ update(Path, Value, Data) ->
     New.
 
 remove(Path, Data) ->
-    {_, New} = traverse(
+    {_, New} = retrieve(
         get_and_update,
         Path,
         Data,
@@ -39,42 +41,67 @@ remove(Path, Data) ->
     ),
     New.
 
+merge(Data) -> merge(Data, #{}).
+
+merge([Data | Rest], Opts) ->
+    lists:foldl(fun(Right, Left) -> merge(Left, Right, Opts) end, Data, Rest).
+
+merge(Left, Right, Opts) ->
+    Default = #{strategy => #{}},
+    traverse(Left, Right, fun(X) -> {todo, X} end, maps:merge(Default, Opts)).
+
 %--- Selectors -----------------------------------------------------------------
 
-key(Key) ->
+map_get(Key) ->
     fun
-        (get, #{Key := Value}, Present) ->
-            {ok, Present(Value)};
+        (get, #{Key := Value}, Fun) ->
+            {ok, Fun(Value)};
         (get, _, _Fun) ->
             % Either the key is not found or the data is not a map
             error;
-        (get_and_update, #{Key := Value} = Map, Present) ->
-            case Present(Value) of
+        (get_and_update, #{Key := Value} = Map, Fun) ->
+            case Fun(Value) of
                 {Value, New} -> {Map, maps:put(Key, New, Map)};
                 pop -> {Map, maps:remove(Key, Map)};
-                _Else -> error({badfun, _Else, Present})
+                _Else -> error({badfun, _Else, Fun})
             end;
         (get_and_update, _Map, _Fun) ->
-            error;
-        (_Else, _Data, _Next) ->
             error
     end.
 
-index(Index) when is_integer(Index) ->
+map_merge(default, Left, Right, Fun) ->
+    map_merge(merge, Left, Right, Fun);
+map_merge(merge, Left, Right, Fun) when is_map(Left), is_map(Right) ->
+    maps:merge_with(Fun, Left, Right);
+map_merge(intersect, Left, Right, Fun) when is_map(Left), is_map(Right) ->
+    maps:intersect_with(Fun, Left, Right);
+map_merge(_Strategy, _Left, Right, _Fun) ->
+    Right.
+
+list_get(Index) when is_integer(Index) ->
     fun
-        (get, List, Present) when is_list(List), Index =< length(List) ->
-            {ok, Present(lists:nth(Index, List))};
+        (get, List, Fun) when is_list(List), Index =< length(List) ->
+            {ok, Fun(lists:nth(Index, List))};
         (get, _Data, _Fun) ->
             % Either the index is out of bounds or the data is not a list
             error;
-        (get_and_update, List, Present) when is_list(List) ->
+        (get_and_update, List, Fun) when is_list(List) ->
             Value = lists:nth(Index, List),
-            case Present(Value) of
+            case Fun(Value) of
                 {Value, New} -> {List, list_replace(Index, New, List)};
                 pop -> {List, list_remove(Index, List)};
-                _Wat -> error({badfun, _Wat, Present})
+                _Wat -> error({badfun, _Wat, Fun})
             end
     end.
+
+list_merge(default, Left, Right, Fun) ->
+    list_merge(append, Left, Right, Fun);
+list_merge(Strategy, Left, Right, _Fun) when Strategy == merge; Strategy == append ->
+    lists:append(Left, Right);
+list_merge(intersect, Left, Right, _Fun) ->
+    sets:to_list(sets:intersection(sets:from_list(Left), sets:from_list(Right)));
+list_merge(_Strategy, _Left, Right, _Fun) ->
+    Right.
 
 all() ->
     fun
@@ -82,6 +109,8 @@ all() ->
             {ok, lists:map(Next, List)};
         (get, Map, Next) when is_map(Map) ->
             {ok, lists:map(Next, maps:values(Map))};
+        (get, Value, Next) ->
+            {ok, Next(Value)};
         (get_and_update, List, Next) when is_list(List) ->
             {List,
                 lists:filtermap(
@@ -108,32 +137,49 @@ all() ->
 
 %--- Internal ------------------------------------------------------------------
 
-traverse(Op, Path, Data, Present, Missing) ->
-    traverse(Op, Path, Data, Present, Missing, []).
+retrieve(Op, Path, Data, Present, Missing) ->
+    retrieve(Op, Path, Data, Present, Missing, []).
 
-traverse(_Op, [], Data, Present, _Missing, _Acc) ->
+retrieve(_Op, [], Data, Present, _Missing, _Acc) ->
     Present(Data);
-traverse(Op, [Key | Path], Data, Present, Missing, Acc) ->
+retrieve(Op, [Key | Path], Data, Present, Missing, Acc) ->
     Fun = selector(Key),
-    case
-        {Op,
-            Fun(Op, Data, fun(V) ->
-                traverse(Op, Path, V, Present, Missing, [Key | Acc])
-            end)}
-    of
+    Next = fun(V) -> retrieve(Op, Path, V, Present, Missing, [Key | Acc]) end,
+    case {Op, Fun(Op, Data, Next)} of
         {get, {ok, Value}} -> Value;
         {get_and_update, {Old, Value}} -> {Old, Value};
         {_, error} -> Missing(Data, lists:reverse([Key | Acc]))
     end;
-traverse(_Op, Path, Data, _Present, _Missing, _Acc) ->
+retrieve(_Op, Path, Data, _Present, _Missing, _Acc) ->
     error({badpath, Path, Data}).
 
+traverse(Left, Right, Fun, Opts) -> traverse(Left, Right, Fun, [], Opts).
+
+traverse(Left, Right, Fun, Path, Opts) ->
+    Merger = merger(Path, Left, Opts),
+    Traverse = fun(K, L, R) ->
+        traverse(L, R, Fun, [K | Path], Opts)
+    end,
+    Merger(Left, Right, Traverse).
+
 selector(Key) when is_function(Key, 3) -> Key;
-selector({index, Index}) when is_integer(Index) -> index(Index);
-selector(Index) when is_integer(Index) -> index(Index);
-selector({key, Key}) -> key(Key);
+selector({index, Index}) when is_integer(Index) -> list_get(Index);
+selector(Index) when is_integer(Index) -> list_get(Index);
+selector({key, Key}) -> map_get(Key);
 % The default is map access
-selector(Key) -> key(Key).
+selector(Key) -> map_get(Key).
+
+merger(Path, Term, #{strategy := Strategies}) ->
+    case maps:get(Path, Strategies, default) of
+        Strategy when is_function(Strategy, 3) ->
+            Strategy;
+        Strategy when is_atom(Strategy) ->
+            case Term of
+                _ when is_map(Term) -> fun(Left, Right, Fun) -> map_merge(Strategy, Left, Right, Fun) end;
+                _ when is_list(Term) -> fun(Left, Right, Fun) -> list_merge(Strategy, Left, Right, Fun) end;
+                _ -> fun(_Left, Right, _Fun) -> Right end
+            end
+    end.
 
 badvalue(V, P) -> error({badvalue, P, V}).
 

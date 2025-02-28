@@ -97,7 +97,10 @@ get_all_test_() ->
             access:get([access:all(), access:all()], #{a => ?LIST, b => ?LIST})
         ),
         % FIXME: Should this return [a, b, [a, b, c], c] (i.e. inclusive) or [[a, b, c]] (i.e. filtering)?
-        % ?_assertEqual([?LIST], access:get([access:all(), access:all()], ?LIST(?LIST)))
+        % ?_assertEqual([?LIST], access:get([access:all(), access:all()], ?LIST(?LIST))),
+
+        % FIXME: Should this return keys too? What about ordering?
+        % ?_assertEqual([3,2,1,[3,2,1]], access:get([access:all(), access:all()], ?MAP(?MAP))),
 
         ?_assertEqual([2, 2], access:get([access:all(), b], [?MAP, ?MAP]))
     ].
@@ -194,4 +197,85 @@ remove_all_test_() ->
             ?MAP([]), access:remove([nested, access:all()], ?MAP(?LIST))
         ),
         ?_assertEqual(?LIST(#{}), access:remove([3, access:all()], ?LIST(?MAP)))
+    ].
+
+merge_test_() ->
+    [
+        ?_assertEqual(
+            #{a => 1, b => -1, c => #{a => 1, b => -1, c => 3}, d => 4},
+            access:merge([
+                #{a => 1, b => 2, c => #{a => 1, b => 2}},
+                #{b => -1, c => #{b => -1, c => 3}, d => 4}
+            ])
+        ),
+        ?_assertEqual(
+            [a, b, c, 1, 2, 3],
+            access:merge([[a, b, c], [1, 2, 3]])
+        ),
+        ?_assertEqual(#{}, access:merge([[], #{}])),
+        ?_assertEqual([], access:merge([#{}, []])),
+        ?_assertEqual(
+            [1, 2, 3],
+            access:merge([[a, b, c], [1, 2, 3]], #{strategy => #{[] => replace}})
+        ),
+        ?_assertEqual(
+            #{b => 2},
+            access:merge([#{a => 1}, #{b => 2}], #{strategy => #{[] => replace}})
+        ),
+        ?_assertEqual(
+            #{
+                a => [1],
+                b => #{
+                    x => #{v => 2, w => 3}
+                },
+                c => 3
+            },
+            access:merge(
+                [
+                    #{
+                        a => #{v => 1},
+                        b => #{
+                            x => #{v => 1, w => 3},
+                            y => 2
+                        },
+                        c => 3
+                    },
+                    #{
+                        a => [1],
+                        b => #{
+                            x => #{v => 2},
+                            z => 3
+                        },
+                        c => 3
+                    }
+                ],
+                #{strategy => #{[b] => intersect}}
+            )
+        )
+    ].
+
+merge_list_intersect_test_() ->
+    [
+        ?_assertEqual(
+            [b],
+            access:merge([[a, b, c], [1, b, 2]], #{strategy => #{[] => intersect}})
+        )
+        % ?_assertEqual(
+        %     [#{a => 2}],
+        %     access:merge([[#{a => 1}, #{b => 2}], [#{b => 2}, #{a => 2}]], #{strategy => #{[access:all()] => intersect}})
+        % )
+    ].
+
+merge_custom_fun_test_() ->
+    [
+        ?_assertEqual(
+            [],
+            access:merge([[], []], #{strategy => #{[] => fun(A, B, _Fun) -> lists:append(A, B) end}})
+        ),
+        ?_assertEqual(
+            [1, 2, 3, a, b, c],
+            access:merge([[1, 2, 3], [a, b, c]], #{
+                strategy => #{[] => fun(A, B, _Fun) -> lists:append(A, B) end}
+            })
+        )
     ].
