@@ -13,11 +13,14 @@
 
 get_nested_test_() ->
     [
+        % Maps
         ?_assertEqual(1, access:get([nested, a], ?MAP(?MAP))),
+        % Lists
         ?_assertEqual(a, access:get([1], ?LIST)),
         ?_assertEqual(a, access:get([3, 1], ?LIST(?LIST))),
         ?_assertEqual(a, access:get([nested, 1], ?MAP(?LIST))),
         ?_assertEqual(a, access:get([1], ?LIST)),
+        % Mixed maps and lists
         ?_assertEqual(1, access:get([3, a], ?LIST(?MAP))),
         ?_assertEqual(1, access:get([3, a], ?LIST(?MAP))),
         ?_assertEqual(a, access:get([nested, 1], ?MAP(?LIST)))
@@ -96,12 +99,11 @@ get_all_test_() ->
             [?LIST, ?LIST],
             access:get([access:all(), access:all()], #{a => ?LIST, b => ?LIST})
         ),
-        % FIXME: Should this return [a, b, [a, b, c], c] (i.e. inclusive) or [[a, b, c]] (i.e. filtering)?
-        % ?_assertEqual([?LIST], access:get([access:all(), access:all()], ?LIST(?LIST))),
-
-        % FIXME: Should this return keys too? What about ordering?
-        % ?_assertEqual([3,2,1,[3,2,1]], access:get([access:all(), access:all()], ?MAP(?MAP))),
-
+        ?_assertEqual(?LIST(?LIST), access:get([access:all(), access:all()], ?LIST(?LIST))),
+        ?_assertEqual(
+            [1, 1, 2, 2, 3, 3],
+            lists:sort(lists:flatten(access:get([access:all(), access:all()], ?MAP(?MAP))))
+        ),
         ?_assertEqual([2, 2], access:get([access:all(), b], [?MAP, ?MAP]))
     ].
 
@@ -177,6 +179,73 @@ update_all_test_() ->
             #{a => -1, b => -1, c => -1},
             access:update([access:all()], -1, ?MAP)
         )
+    ].
+
+get_and_update_test_() ->
+    [
+        % Basic map tests
+        ?_assertEqual(
+            {1, maps:merge(?MAP, #{a => -1})},
+            access:get_and_update([a], -1, ?MAP)
+        ),
+        ?_assertEqual(
+            {2, maps:merge(?MAP, #{b => -1})},
+            access:get_and_update([b], -1, ?MAP)
+        ),
+
+        % Basic list tests
+        ?_assertEqual(
+            {a, [x, b, c]},
+            access:get_and_update([1], x, ?LIST)
+        ),
+        ?_assertEqual(
+            {b, [a, x, c]},
+            access:get_and_update([2], x, ?LIST)
+        ),
+
+        % Nested tests with maps and lists
+        ?_assertEqual(
+            {1, ?MAP(maps:merge(?MAP, #{a => -1}))},
+            access:get_and_update([nested, a], -1, ?MAP(?MAP))
+        ),
+        ?_assertEqual(
+            {a, ?MAP([x, b, c])},
+            access:get_and_update([nested, 1], x, ?MAP(?LIST))
+        ),
+        ?_assertEqual(
+            {1, ?LIST(maps:merge(?MAP, #{a => -1}))},
+            access:get_and_update([3, a], -1, ?LIST(?MAP))
+        ),
+        ?_assertEqual(
+            {a, ?LIST([x, b, c])},
+            access:get_and_update([3, 1], x, ?LIST(?LIST))
+        ),
+
+        % Explicit key and index tests
+        ?_assertEqual(
+            {1, maps:merge(?MAP, #{a => -1})},
+            access:get_and_update([{key, a}], -1, ?MAP)
+        ),
+        ?_assertEqual(
+            {a, [x, b, c]},
+            access:get_and_update([{index, 1}], x, ?LIST)
+        ),
+
+        % all accessor tests - note that map values may be returned in any order
+        ?_test(begin
+            {Values, Updated} = access:get_and_update([access:all()], -1, ?MAP),
+            ?assertEqual(lists:sort([1, 2, 3]), lists:sort(Values)),
+            ?assertEqual(#{a => -1, b => -1, c => -1}, Updated)
+        end),
+        ?_assertEqual(
+            {?LIST, [-1, -1, -1]},
+            access:get_and_update([access:all()], -1, ?LIST)
+        ),
+
+        % Error cases
+        ?_assertError({badvalue, [x], ?MAPP}, access:get_and_update([x], -1, ?MAP)),
+        ?_assertError({badvalue, [4], ?LIST}, access:get_and_update([4], -1, ?LIST)),
+        ?_assertError({badpath, x, #{}}, access:get_and_update(x, -1, #{}))
     ].
 
 remove_test_() ->

@@ -4,6 +4,7 @@
 -export([get/2]).
 -export([find/2]).
 -export([update/3]).
+-export([get_and_update/3]).
 -export([remove/2]).
 -export([merge/1]).
 -export([merge/2]).
@@ -30,6 +31,15 @@ update(Path, Value, Data) ->
         fun badvalue/2
     ),
     New.
+
+get_and_update(Path, Value, Data) ->
+    retrieve(
+        get_and_update,
+        Path,
+        Data,
+        fun(Current) -> {Current, Value} end,
+        fun badvalue/2
+    ).
 
 remove(Path, Data) ->
     {_, New} = retrieve(
@@ -61,8 +71,8 @@ map_get(Key) ->
             error;
         (get_and_update, #{Key := Value} = Map, Fun) ->
             case Fun(Value) of
-                {Value, New} -> {Map, maps:put(Key, New, Map)};
-                pop -> {Map, maps:remove(Key, Map)};
+                {Old, New} -> {Old, maps:put(Key, New, Map)};
+                pop -> {Value, maps:remove(Key, Map)};
                 _Else -> error({badfun, _Else, Fun})
             end;
         (get_and_update, _Map, _Fun) ->
@@ -85,13 +95,15 @@ list_get(Index) when is_integer(Index) ->
         (get, _Data, _Fun) ->
             % Either the index is out of bounds or the data is not a list
             error;
-        (get_and_update, List, Fun) when is_list(List) ->
-            Value = lists:nth(Index, List),
+        (get_and_update, List, Fun) when is_list(List), abs(Index) > 0, abs(Index) < length(List) ->
+            Value = list_get(Index, List),
             case Fun(Value) of
-                {Value, New} -> {List, list_replace(Index, New, List)};
-                pop -> {List, list_remove(Index, List)};
+                {Old, New} -> {Old, list_replace(Index, New, List)};
+                pop -> {Value, list_remove(Index, List)};
                 _Wat -> error({badfun, _Wat, Fun})
-            end
+            end;
+        (get_and_update, _List, _Fun) ->
+            error
     end.
 
 list_merge(default, Left, Right, Fun) ->
@@ -112,27 +124,31 @@ all() ->
         (get, Value, Next) ->
             {ok, Next(Value)};
         (get_and_update, List, Next) when is_list(List) ->
-            {List,
+            {
+                List,
                 lists:filtermap(
                     fun(Value) ->
                         case Next(Value) of
-                            {Value, New} -> {true, New};
+                            {_Old, New} -> {true, New};
                             pop -> false
                         end
                     end,
                     List
-                )};
+                )
+            };
         (get_and_update, Map, Next) when is_map(Map) ->
-            {Map,
+            {
+                maps:values(Map),
                 maps:filtermap(
                     fun(_Key, Value) ->
                         case Next(Value) of
-                            {Value, New} -> {true, New};
+                            {_Old, New} -> {true, New};
                             pop -> false
                         end
                     end,
                     Map
-                )}
+                )
+            }
     end.
 
 %--- Internal ------------------------------------------------------------------
@@ -175,13 +191,19 @@ merger(Path, Term, #{strategy := Strategies}) ->
             Strategy;
         Strategy when is_atom(Strategy) ->
             case Term of
-                _ when is_map(Term) -> fun(Left, Right, Fun) -> map_merge(Strategy, Left, Right, Fun) end;
-                _ when is_list(Term) -> fun(Left, Right, Fun) -> list_merge(Strategy, Left, Right, Fun) end;
-                _ -> fun(_Left, Right, _Fun) -> Right end
+                _ when is_map(Term) ->
+                    fun(Left, Right, Fun) -> map_merge(Strategy, Left, Right, Fun) end;
+                _ when is_list(Term) ->
+                    fun(Left, Right, Fun) -> list_merge(Strategy, Left, Right, Fun) end;
+                _ ->
+                    fun(_Left, Right, _Fun) -> Right end
             end
     end.
 
 badvalue(V, P) -> error({badvalue, P, V}).
+
+list_get(Index, List) when Index > 0 ->
+    lists:nth(Index, List).
 
 list_replace(Index, Value, List) -> list_modify(replace, Index, 1, Value, List).
 
