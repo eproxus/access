@@ -135,7 +135,7 @@ update_all_test_() ->
             )
         ),
         ?_assertEqual(
-            [-1, -1, -1],
+            #{a => -1, b => -1, c => -1},
             access:update([access:all()], -1, ?MAP)
         )
     ].
@@ -150,9 +150,10 @@ remove_test_() ->
         )
     ].
 
-% remove_all_test_() ->
-%     [
-%         ?_assertEqual(maps:without([a], ?MAP), access:remove([access:all()], ?MAP)),
-%         ?_assertEqual([a, c], access:remove([access:all()], ?LIST)),
-%         ?_assertEqual(?MAP([a, c]), access:remove([access:all()], ?MAP(?LIST)))
-%     ].
+remove_all_test_() ->
+    [
+        ?_assertEqual(#{}, access:remove([access:all()], ?MAP)),
+        ?_assertEqual([], access:remove([access:all()], ?LIST)),
+        ?_assertEqual(?MAP([]), access:remove([nested, access:all()], ?MAP(?LIST))),
+        ?_assertEqual(?LIST(#{}), access:remove([3, access:all()], ?LIST(?MAP)))
+    ].

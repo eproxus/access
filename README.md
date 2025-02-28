@@ -35,6 +35,8 @@ access:get([2, 1], List).  % Returns 2
 % Using the all() selector
 access:get([access:all()], [1, 2, 3]).  % Returns [1, 2, 3]
 access:update([access:all()], 0, [1, 2, 3]).  % Returns [0, 0, 0]
+access:remove([access:all()], #{a => 1, b => 2}).  % Returns #{}
+access:remove([a, access:all()], #{a => [1, 2, 3]}).  % Returns #{a => []}
 ```
 
 ## Status

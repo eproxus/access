@@ -74,21 +74,25 @@ all() ->
             {Map, lists:map(Next, maps:values(Map))};
         (get_and_update, List, Next) when is_list(List) ->
             {List,
-                lists:map(
-                    fun(Elem) ->
-                        {_, New} = Next(Elem),
-                        New
+                lists:filtermap(
+                    fun(Value) ->
+                        case Next(Value) of
+                            {Value, New} -> {true, New};
+                            pop -> false
+                        end
                     end,
                     List
                 )};
         (get_and_update, Map, Next) when is_map(Map) ->
             {Map,
-                lists:map(
-                    fun(Elem) ->
-                        {_, New} = Next(Elem),
-                        New
+                maps:filtermap(
+                    fun(_Key, Value) ->
+                        case Next(Value) of
+                            {Value, New} -> {true, New};
+                            pop -> false
+                        end
                     end,
-                    maps:values(Map)
+                    Map
                 )}
     end.
 
@@ -101,9 +105,7 @@ get([], Data, Present, _Missing, _Acc) ->
     Present(Data);
 get([Key | Path], Data, Present, Missing, Acc) ->
     Fun = selector(Key, Data),
-    case
-        Fun(get, Data, fun(V) -> get(Path, V, Present, Missing, [Key | Acc]) end)
-    of
+    case Fun(get, Data, fun(V) -> get(Path, V, Present, Missing, [Key | Acc]) end) of
         {_Old, Value} -> Value;
         error -> Missing(Data, lists:reverse([Key | Acc]))
     end;
