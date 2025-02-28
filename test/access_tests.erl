@@ -23,6 +23,38 @@ get_nested_test_() ->
         ?_assertEqual(a, access:get([nested, 1], ?MAP(?LIST)))
     ].
 
+path_explicit_key_test_() ->
+    Map = #{1 => #{{key, x} => a}},
+    Path = [{key, 1}, {key, {key, x}}],
+    [
+        ?_assertEqual(a, access:get(Path, Map)),
+        ?_assertEqual({ok, a}, access:find(Path, Map)),
+        ?_assertEqual(#{1 => #{{key, x} => x}}, access:update(Path, x, Map)),
+        ?_assertEqual(#{1 => #{}}, access:remove(Path, Map)),
+        ?_assertError(
+            {badvalue, [{key, 1}], ?LIST},
+            access:get([{key, 1}], ?LIST)
+        )
+    ].
+
+path_explicit_index_test_() ->
+    List = ?LIST(?LIST),
+    [
+        ?_assertEqual(a, access:get([{index, 3}, {index, 1}], List)),
+        ?_assertEqual({ok, a}, access:find([{index, 3}, {index, 1}], List)),
+        ?_assertEqual(
+            ?LIST([x, b, c]),
+            access:update([{index, 3}, {index, 1}], x, List)
+        ),
+        ?_assertEqual(
+            ?LIST([b, c]),
+            access:remove([{index, 3}, {index, 1}], List)
+        ),
+        ?_assertError(
+            {badvalue, [{index, 1}], ?MAPP}, access:get([{index, 1}], ?MAP)
+        )
+    ].
+
 get_errors_test_() ->
     Fun = access:all(),
     [
@@ -35,16 +67,20 @@ get_errors_test_() ->
         ?_assertError({badvalue, [4], ?MAPP}, access:get([4], ?MAP)),
         % Nested
         ?_assertError(
-            {badvalue, [nested, x], ?MAPP}, access:get([nested, x], ?MAP(?MAP))
+            {badvalue, [nested, x], ?MAPP},
+            access:get([nested, x], ?MAP(?MAP))
         ),
         ?_assertError(
-            {badvalue, [nested, 4], ?LIST}, access:get([nested, 4], ?MAP(?LIST))
+            {badvalue, [nested, 4], ?LIST},
+            access:get([nested, 4], ?MAP(?LIST))
         ),
         ?_assertError(
-            {badvalue, [3, x], ?MAPP}, access:get([3, x], ?LIST(?MAP))
+            {badvalue, [3, x], ?MAPP},
+            access:get([3, x], ?LIST(?MAP))
         ),
         ?_assertError(
-            {badvalue, [3, 4], ?LIST}, access:get([3, 4], ?LIST(?LIST))
+            {badvalue, [3, 4], ?LIST},
+            access:get([3, 4], ?LIST(?LIST))
         )
     ].
 
@@ -154,6 +190,8 @@ remove_all_test_() ->
     [
         ?_assertEqual(#{}, access:remove([access:all()], ?MAP)),
         ?_assertEqual([], access:remove([access:all()], ?LIST)),
-        ?_assertEqual(?MAP([]), access:remove([nested, access:all()], ?MAP(?LIST))),
+        ?_assertEqual(
+            ?MAP([]), access:remove([nested, access:all()], ?MAP(?LIST))
+        ),
         ?_assertEqual(?LIST(#{}), access:remove([3, access:all()], ?LIST(?MAP)))
     ].

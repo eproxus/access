@@ -8,26 +8,34 @@
 % Selectors
 -export([all/0]).
 
--compile([{inline, [get/4, get_and_update/4, selector/2, key/1, index/1]}]).
+-compile([{inline, [traverse/5, selector/1, key/1, index/1]}]).
 
 %--- API -----------------------------------------------------------------------
 
 get(Path, Data) ->
     % traverse(get, Path, Data, fun(V) -> V end, fun badvalue/2).
-    get(Path, Data, fun(V) -> V end, fun badvalue/2).
+    traverse(get, Path, Data, fun(V) -> V end, fun badvalue/2).
 
 find(Path, Data) ->
-    get(Path, Data, fun(V) -> {ok, V} end, fun(_V, _P) -> error end).
+    traverse(get, Path, Data, fun(V) -> {ok, V} end, fun(_V, _P) -> error end).
 
 update(Path, Value, Data) ->
-    {_, New} = get_and_update(
-        Path, Data, fun(Current) -> {Current, Value} end, fun badvalue/2
+    {_, New} = traverse(
+        get_and_update,
+        Path,
+        Data,
+        fun(Current) -> {Current, Value} end,
+        fun badvalue/2
     ),
     New.
 
 remove(Path, Data) ->
-    {_, New} = get_and_update(
-        Path, Data, fun(_Current) -> pop end, fun badvalue/2
+    {_, New} = traverse(
+        get_and_update,
+        Path,
+        Data,
+        fun(_Current) -> pop end,
+        fun badvalue/2
     ),
     New.
 
@@ -37,7 +45,8 @@ key(Key) ->
     fun
         (get, #{Key := Value}, Present) ->
             {ok, Present(Value)};
-        (get, #{}, _Fun) ->
+        (get, _, _Fun) ->
+            % Either the key is not found or the data is not a map
             error;
         (get_and_update, #{Key := Value} = Map, Present) ->
             case Present(Value) of
@@ -55,7 +64,8 @@ index(Index) when is_integer(Index) ->
     fun
         (get, List, Present) when is_list(List), Index =< length(List) ->
             {ok, Present(lists:nth(Index, List))};
-        (get, List, _Fun) when is_list(List) ->
+        (get, _Data, _Fun) ->
+            % Either the index is out of bounds or the data is not a list
             error;
         (get_and_update, List, Present) when is_list(List) ->
             Value = lists:nth(Index, List),
@@ -69,9 +79,9 @@ index(Index) when is_integer(Index) ->
 all() ->
     fun
         (get, List, Next) when is_list(List) ->
-            {List, lists:map(Next, List)};
+            {ok, lists:map(Next, List)};
         (get, Map, Next) when is_map(Map) ->
-            {Map, lists:map(Next, maps:values(Map))};
+            {ok, lists:map(Next, maps:values(Map))};
         (get_and_update, List, Next) when is_list(List) ->
             {List,
                 lists:filtermap(
@@ -98,47 +108,32 @@ all() ->
 
 %--- Internal ------------------------------------------------------------------
 
-get(Path, Data, Present, Missing) ->
-    get(Path, Data, Present, Missing, []).
+traverse(Op, Path, Data, Present, Missing) ->
+    traverse(Op, Path, Data, Present, Missing, []).
 
-get([], Data, Present, _Missing, _Acc) ->
+traverse(_Op, [], Data, Present, _Missing, _Acc) ->
     Present(Data);
-get([Key | Path], Data, Present, Missing, Acc) ->
-    Fun = selector(Key, Data),
-    case Fun(get, Data, fun(V) -> get(Path, V, Present, Missing, [Key | Acc]) end) of
-        {_Old, Value} -> Value;
-        error -> Missing(Data, lists:reverse([Key | Acc]))
-    end;
-get(Path, Data, _Present, _Missing, _Acc) ->
-    error({badpath, Path, Data}).
-
-get_and_update(Path, Data, Present, Missing) ->
-    get_and_update(Path, Data, Present, Missing, []).
-
-get_and_update([], Data, Present, _Missing, _Acc) ->
-    Present(Data);
-get_and_update([Key | Path], Data, Present, Missing, Acc) ->
-    Fun = selector(Key, Data),
+traverse(Op, [Key | Path], Data, Present, Missing, Acc) ->
+    Fun = selector(Key),
     case
-        Fun(get_and_update, Data, fun(V) ->
-            get_and_update(Path, V, Present, Missing, [Key | Acc])
-        end)
+        {Op,
+            Fun(Op, Data, fun(V) ->
+                traverse(Op, Path, V, Present, Missing, [Key | Acc])
+            end)}
     of
-        {Old, New} -> {Old, New};
-        error -> Missing(Data, lists:reverse([Key | Acc]))
+        {get, {ok, Value}} -> Value;
+        {get_and_update, {Old, Value}} -> {Old, Value};
+        {_, error} -> Missing(Data, lists:reverse([Key | Acc]))
     end;
-get_and_update(Path, Data, _Present, _Missing, _Acc) ->
+traverse(_Op, Path, Data, _Present, _Missing, _Acc) ->
     error({badpath, Path, Data}).
 
-selector(Key, Data) ->
-    Fun =
-        case {Key, Data} of
-            {Key, Data} when is_function(Key, 3) -> Key;
-            {Key, Data} when is_integer(Key), is_list(Data) -> index(Key);
-            % FIXME: Return fun that just returns `error` instead?
-            _Else -> key(Key)
-        end,
-    Fun.
+selector(Key) when is_function(Key, 3) -> Key;
+selector({index, Index}) when is_integer(Index) -> index(Index);
+selector(Index) when is_integer(Index) -> index(Index);
+selector({key, Key}) -> key(Key);
+% The default is map access
+selector(Key) -> key(Key).
 
 badvalue(V, P) -> error({badvalue, P, V}).
 
